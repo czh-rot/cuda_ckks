@@ -24,6 +24,8 @@ class MultPtxtBatch {
   // register the operands to be multiplied and summed up.
   void push(const Ciphertext& op1, const Plaintext& op2);
   void flush(Ciphertext& out);
+  void push2(const Ciphertext& op1, const Plaintext& op2);
+  void flush2(Ciphertext& out);
 
  private:
   const Context* context_;
@@ -31,6 +33,7 @@ class MultPtxtBatch {
   AddrVector ax__;
   AddrVector bx__;
   AddrVector mx__;
+  vector<word64> cst__;
 };
 
 }  // namespace ckks

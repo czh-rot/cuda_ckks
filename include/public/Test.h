@@ -203,10 +203,35 @@ class Test {
     return ctxt;
   }
 
+  auto GetRandomPQCiphertext() const {
+    ckks::Ciphertext ctxt;
+    auto& ax = ctxt.getAxDevice();
+    auto& bx = ctxt.getBxDevice();
+    ax = GetRandomPolyRNS(param.max_num_moduli_);
+    bx = GetRandomPolyRNS(param.max_num_moduli_);
+    return ctxt;
+  }
+
+  auto GetRandomACiphertext() const {
+    ckks::Ciphertext ctxt;
+    auto& ax = ctxt.getAxDevice();
+    auto& bx = ctxt.getBxDevice();
+    ax = GetRandomPolyRNS(param.alpha_);
+    bx = GetRandomPolyRNS(param.alpha_);
+    return ctxt;
+  }
+
   auto GetRandomPlaintext() const {
     ckks::Plaintext ptxt;
     auto& mx = ptxt.getMxDevice();
     mx = GetRandomPolyRNS(param.chain_length_);
+    return ptxt;
+  }
+
+  auto GetRandomPQPlaintext() const {
+    ckks::Plaintext ptxt;
+    auto& mx = ptxt.getMxDevice();
+    mx = GetRandomPolyRNS(param.max_num_moduli_);
     return ptxt;
   }
 

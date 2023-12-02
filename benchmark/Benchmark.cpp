@@ -1352,7 +1352,9 @@ class Benchmark {
     Ciphertext op1 = ckks.GetRandomCiphertext(); // init ciphertext(ch1, ch2)
     vector<vector<Plaintext>> m(4, vector<Plaintext>(9));
     for (int i = 0; i < 4; ++i) {
-      m[i] = ckks.GetRandomPQPlaintext(); // PQ plaintext
+      for (int j = 0; j < 9; ++j) {
+        m[i][j] = ckks.GetRandomPQPlaintext(); // PQ plaintext
+      }
     }
 
     Ciphertext in_raise;
@@ -1426,7 +1428,88 @@ class Benchmark {
     // Conv finish !!
   }
 
+  void HE_Conv_3_My() {
+    // ckks.context.is_modup_batched = true;
+    // ckks.context.is_moddown_fused = true;
+    ckks.context.is_keyswitch_fused = true;
+    const int num_moduli_after_moddown = param.chain_length_; // init l
+    auto key = ckks.GetRandomKey();
+    vector<Ciphertext> input;
+    for (int i = 0; i < param.dnum_; ++i) { // inital ciphertext index
+      input.push_back(GetRandomACiphertext());
+    }
+    vector<vector<Plaintext>> m(4, vector<Plaintext>(9));
+    for (int i = 0; i < 4; ++i) {
+      for (int j = 0; j < 9; ++j) {
+        m[i][j] = ckks.GetRandomPQPlaintext(); // PQ plaintext
+      }
+    }
+    DeviceVector vec = ckks.GetRandomPolyRNS(1);
+    Ciphertext d2o;
+    Ciphertext ksto;
+    //vector<Ciphertext> out(9); // inner rot immediate result
+    vector<vector<Ciphertext>> out(2, vector<Ciphertext>(9));
+    Ciphertext temp;
+    DeviceVector rax;
+    DeviceVector rbx;
+    vector<Ciphertext> res(2);
+    auto in = ckks.GetRandomPolyAfterModUp(param.dnum_);
+    MultPtxtBatch batcher(&ckks.context);
 
+    for (int i = 0; i < param.dnum_; ++i) {
+      temp.ax__.append(input[i].ax__);
+      temp.bx__.append(input[i].bx__);
+    }
+
+    // 1-stage rot * 8 (autom -> modup -> innerp -> moddown --> add)
+    // record itslef, unneccessary operate
+    // for (int i = 0; i < param.dnum_; ++i) {
+    //   out[0][i] = input[i];
+    // }
+    out[0][0] = temp;
+    // rotate k^2 - 1
+    for (int i = 0; i < param.dnum_; ++i) {
+      ckks.context.AutomorphismTransform(input[i], rax, rbx, i, vec);
+      auto raxo = ckks.context.ModUp(rax);
+    }
+    // in == append(raxo)
+    for (int j = 0; j < 8; ++j) {
+      ckks.context.KeySwitch(in, key, d2o.ax__, d2o.bx__);
+      ckks.context.Add(d2o, d2o, d2o); // add
+      out[0][j+1] = d2o; // restore
+    }
+
+    // rotate k^2 (1 out + k^2 - 1 rot)
+    for (int i = 0; i < param.dnum_; ++i) {
+      ckks.context.AutomorphismTransform(input[i], rax, rbx, i, vec);
+      auto raxo = ckks.context.ModUp(rax);
+    }
+    for (int j = 0; j < 9; ++j) {
+      ckks.context.KeySwitch(in, key, d2o.ax__, d2o.bx__);
+      ckks.context.Add(d2o, d2o, d2o); // add
+      out[1][j+1] = d2o; // restore
+    }
+
+    // Fusion MAC
+    for (int i = 0; i < 9; ++i) {
+      batcher.push2(out[0][i], m[0][i]);
+      batcher.push2(out[1][i], m[2][i]);
+    }
+    batcher.flush2(res[0]);
+
+    for (int i = 0; i < 9; ++i) {
+      batcher.push2(out[0][i], m[1][i]);
+      batcher.push2(out[1][i], m[3][i]);
+    }
+    batcher.flush2(res[1]);
+
+    // moddown
+    vector<Ciphertext> ans(2);
+    for (int i = 0; i <2; ++i) {
+      ckks.context.ModDown(res[i], ans[i], num_moduli_after_moddown);
+    }
+    // Conv finish !!
+  }
 /*
   void ModUpBench() {
     // std::cout <<param.degree_<< "\n" <<
@@ -1462,7 +1545,7 @@ class Benchmark {
     ckks.context.is_keyswitch_fused = true;
     Run("FusedKeySwitch", &Context::KeySwitch, in, key, ax, bx);
   }
-
+*/
   //  innerP
   void PtxtCtxtBatchBench() {
     int batch_size = 10;
@@ -1492,7 +1575,6 @@ class Benchmark {
     // Run("PtxtCtxtMAD", MAD, op1, op2);
     Run("BatchedPtxtCtxtMAD", BatchMAD, op1, op2);
   }
-  */
 
  private:
   Test ckks;

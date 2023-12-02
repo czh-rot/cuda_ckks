@@ -25,6 +25,21 @@ void MultPtxtBatch::push(const Ciphertext& op1, const Plaintext& op2) {
   mx__.push_back(mx.data());
 }
 
+void MultPtxtBatch::push2(const Ciphertext& op1, const Plaintext& op2) {
+  //const auto& mx = op2.getMxDevice();
+  auto& ax = op1.getAxDevice();
+  auto& bx = op1.getBxDevice();
+  if (ax.size() != bx.size())
+    throw std::logic_error("Size does not match");
+  if (ax__.size() == 0) {
+    required_size = ax.size();
+  }
+  ax__.push_back(ax.data());
+  bx__.push_back(bx.data());
+  //cst__.push_back(ccst);
+  //mx__.push_back(mx.data());
+}
+
 void MultPtxtBatch::flush(Ciphertext& out) {
   auto& out_ax = out.getAxDevice();
   auto& out_bx = out.getBxDevice();
@@ -32,4 +47,13 @@ void MultPtxtBatch::flush(Ciphertext& out) {
   if (out_bx.size() != required_size) out_bx.resize(required_size);
   const int level = required_size / context_->GetDegree();
   context_->hadamardMultAndAddBatch(ax__, bx__, mx__, level, out_ax, out_bx);
+}
+
+void MultPtxtBatch::flush2(Ciphertext& out) {
+  auto& out_ax = out.getAxDevice();
+  auto& out_bx = out.getBxDevice();
+  if (out_ax.size() != required_size) out_ax.resize(required_size);
+  if (out_bx.size() != required_size) out_bx.resize(required_size);
+  const int level = required_size / context_->GetDegree();
+  context_->hadamardMultAndAddBatch2(ax__, bx__, level, out_ax, out_bx);
 }

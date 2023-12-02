@@ -968,6 +968,31 @@ __global__ void hadamardMultAndAddBatch_(
   STRIDED_LOOP_END;
 }
 
+__global__ void hadamardMultAndAddBatch_2(
+    const KernelParams ring, const word64 **ax_addr, const word64 **bx_addr,
+    const int fold_size, const size_t size,
+    const int log_degree, word64 *out_ax, word64 *out_bx) {
+  STRIDED_LOOP_START(size, idx);
+  const int prime_idx = idx >> log_degree;
+  const uint64_t prime = ring.primes[prime_idx];
+  uint128_t sum_ax = {0};
+  uint128_t sum_bx = {0};
+  const word64 mx_element = 224178;
+  for (int fold_idx = 0; fold_idx < fold_size; fold_idx++) {
+    const word64 *ax = ax_addr[fold_idx];
+    const word64 *bx = bx_addr[fold_idx];
+    sum_ax += mult_64_64_128(ax[idx], mx_element);
+    sum_bx += mult_64_64_128(bx[idx], mx_element);
+  }
+  out_ax[idx] = barret_reduction_128_64(
+      sum_ax, prime, ring.barret_ratio[prime_idx], ring.barret_k[prime_idx]);
+  out_bx[idx] = barret_reduction_128_64(
+      sum_bx, prime, ring.barret_ratio[prime_idx], ring.barret_k[prime_idx]);
+  if (out_ax[idx] > prime) out_ax[idx] -= prime;
+  if (out_bx[idx] > prime) out_bx[idx] -= prime;
+  STRIDED_LOOP_END;
+}
+
 void Context::hadamardMultAndAddBatch(const std::vector<const word64 *> ax_addr,
                                       const std::vector<const word64 *> bx_addr,
                                       const std::vector<const word64 *> mx_addr,
@@ -996,6 +1021,31 @@ void Context::hadamardMultAndAddBatch(const std::vector<const word64 *> ax_addr,
       out_bx.data());
 }
 
+void Context::hadamardMultAndAddBatch2(const std::vector<const word64 *> ax_addr,
+                                      const std::vector<const word64 *> bx_addr,
+                                      const int num_primes,
+                                      DeviceVector &out_ax,
+                                      DeviceVector &out_bx) const {
+  assert(ax_addr.size() == bx_addr.size());
+  if (out_ax.size() != (size_t)num_primes * degree__ ||
+      out_bx.size() != (size_t)num_primes * degree__)
+    throw std::logic_error("Output has no proper size");
+  const int fold_size = ax_addr.size();
+  const int each_operand_size = num_primes * degree__;
+  size_t addr_buffer_size = fold_size * sizeof(word64 *);
+  const DeviceBuffer d_ax_addr(ax_addr.data(), addr_buffer_size,
+                               cudaStreamLegacy);
+  const DeviceBuffer d_bx_addr(bx_addr.data(), addr_buffer_size,
+                               cudaStreamLegacy);
+  const int block_dim = 256;
+  const int grid_dim = each_operand_size / block_dim;
+  hadamardMultAndAddBatch_2<<<grid_dim, block_dim>>>(
+      GetKernelParams(), (const word64 **)d_ax_addr.data(),
+      (const word64 **)d_bx_addr.data(),
+      fold_size, each_operand_size, param__.log_degree_, out_ax.data(),
+      out_bx.data());
+}
+
 __global__ void hadamardMultFused_(size_t degree, size_t log_degree,
                               size_t num_primes, const uint64_t* primes,
                               const uint64_t* barret_ratio,
@@ -1006,6 +1056,24 @@ __global__ void hadamardMultFused_(size_t degree, size_t log_degree,
   const int prime_idx = i >> log_degree;
   const uint64_t prime = primes[prime_idx];
   uint64_t mx_element = mx[i];
+  uint128_t out_op1 = mult_64_64_128(op1[i], mx_element);
+  uint128_t out_op2 = mult_64_64_128(op2[i], mx_element);
+  op1_out[i] = barret_reduction_128_64(out_op1, prime, barret_ratio[prime_idx],
+                                   barret_k[prime_idx]);
+  op2_out[i] = barret_reduction_128_64(out_op2, prime, barret_ratio[prime_idx],
+                                   barret_k[prime_idx]);
+}
+
+__global__ void hadamardMultSFused_(size_t degree, size_t log_degree,
+                              size_t num_primes, const uint64_t* primes,
+                              const uint64_t* barret_ratio,
+                              const uint64_t* barret_k, const uint64_t* op1,
+                              const uint64_t* op2,
+                              uint64_t* op1_out, uint64_t* op2_out) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  const int prime_idx = i >> log_degree;
+  const uint64_t prime = primes[prime_idx];
+  uint64_t mx_element = 2441581;
   uint128_t out_op1 = mult_64_64_128(op1[i], mx_element);
   uint128_t out_op2 = mult_64_64_128(op2[i], mx_element);
   op1_out[i] = barret_reduction_128_64(out_op1, prime, barret_ratio[prime_idx],
@@ -1075,6 +1143,22 @@ void Context::PMult(const Ciphertext &ct, const Plaintext &pt,
       op2_out.data());
 }
 
+void Context::PSMult(const Ciphertext &ct, const Plaintext &pt,
+                    Ciphertext &out) const {
+  const auto &op1 = ct.getAxDevice();
+  const auto &op2 = ct.getBxDevice();
+  // const auto &mx = pt.getMxDevice();
+  auto &op1_out = out.getAxDevice();
+  auto &op2_out = out.getBxDevice();
+  op1_out.resize(op1.size());
+  op2_out.resize(op1.size());
+  int num_primes = op1.size() / degree__;
+  hadamardMultSFused_<<<degree__ * num_primes / 256, 256>>>(
+      degree__, param__.log_degree_, num_primes, primes__.data(), barret_ratio__.data(),
+      barret_k__.data(), op1.data(), op2.data(), op1_out.data(),
+      op2_out.data());
+}
+
 __global__ void add_(const KernelParams params,
                      const int batch, const word64* op1, const word64* op2,
                      word64* op3) {
@@ -1086,11 +1170,11 @@ __global__ void add_(const KernelParams params,
   STRIDED_LOOP_END;
 }
 
-__global__ void automorphism_(const KernelParams params, word64* ax, word64* res, int length, int autoIndex, word64* vec) {
-  STRIDED_LOOP_START(length *params.degree, i);
-  int tmp = i % params.degree;
-  int l = i / params.degree;
-  auto axi = ax + l * params.degree;
+__global__ void automorphism_(const size_t degree, word64* ax, word64* res, int length, int autoIndex, word64* vec) {
+  STRIDED_LOOP_START(length * degree, i);
+  int tmp = i % degree;
+  int l = i / degree;
+  auto axi = ax + l * degree;
   res[i] = axi[vec[tmp]];
   STRIDED_LOOP_END;
 }
@@ -1104,8 +1188,32 @@ void Context::AutomorphismTransform(Ciphertext &ct, DeviceVector &resax,
   resax.resize(ax.size());
   resbx.resize(bx.size());
   const int length = ax.size() / degree__;
-  automorphism_<<<gridDim, blockDim>>>(GetKernelParams(), ax.data(), resax.data(), length, autoIndex, vec.data());
-  automorphism_<<<gridDim, blockDim>>>(GetKernelParams(), bx.data(), resbx.data(), length, autoIndex, vec.data());
+  automorphism_<<<gridDim, blockDim>>>(degree__, ax.data(), resax.data(), length, autoIndex, vec.data());
+  automorphism_<<<gridDim, blockDim>>>(degree__, bx.data(), resbx.data(), length, autoIndex, vec.data());
+}
+
+// unuseless function
+__global__ void automorphism2_(const size_t degree, word64* ax, word64* res, int length, int autoIndex, word64* vec) {
+  STRIDED_LOOP_START(length * degree, i);
+  int tmp = i % degree;
+  int l = i / degree;
+  auto axi = ax + l * degree;
+  res[i] = axi[vec[tmp]];
+  STRIDED_LOOP_END;
+}
+
+// unuseless function
+void Context::AutomorphismTransform2(Ciphertext &ct, DeviceVector &resax,  
+                                    DeviceVector &resbx, int autoIndex, DeviceVector &vec) const {
+  int gridDim = 1024;
+  int blockDim = 256; // 
+  auto &ax = ct.getAxDevice();
+  auto &bx = ct.getBxDevice();
+  resax.resize(ax.size());
+  resbx.resize(bx.size());
+  const int length = ax.size() / degree__;
+  automorphism2_<<<gridDim, blockDim>>>(degree__, ax.data(), resax.data(), length, autoIndex, vec.data());
+  automorphism2_<<<gridDim, blockDim>>>(degree__, bx.data(), resbx.data(), length, autoIndex, vec.data());
 }
 
 void Context::CCAdd(const Ciphertext &ct1, const Plaintext &pt,
