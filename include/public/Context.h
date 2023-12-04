@@ -31,14 +31,20 @@ class Context {
 
  public:
   Context(const Parameter& param);
+  void ChangeToPQ(const Ciphertext& op_in, Ciphertext & op_out) const;
   void KeySwitch(const DeviceVector& modup_out, const EvaluationKey& evk,
                  DeviceVector& sum_ax, DeviceVector& sum_bx) const;
   void PMult(const Ciphertext&, const Plaintext&, Ciphertext&) const;
   void CCMult(const Ciphertext &ct, const Ciphertext &ct2, Ciphertext &out, DeviceVector &c) const;
   void CCAdd(const Ciphertext &ct1, const Plaintext &ct2, Ciphertext &out) const;
   void Add(const Ciphertext&, const Ciphertext&, Ciphertext&) const;
+  void RAdd(const Ciphertext &ct1, const DeviceVector &ct2, Ciphertext &out) const;
   void AutomorphismTransform(Ciphertext &ct, DeviceVector &resax,  
                             DeviceVector &resbx, int autoIndex, DeviceVector &vec) const;
+  void AutomorphismTransform2(Ciphertext &ct, DeviceVector &resax,  
+                                    DeviceVector &resbx, int autoIndex, DeviceVector &vec) const;
+  void AutomorphismTransformS(DeviceVector &op1, DeviceVector &op2,  DeviceVector &resax, 
+                              DeviceVector & resbx, int autoIndex, DeviceVector &vec) const;
   DeviceVector ModUp(const DeviceVector& in) const;
   void EnableMemoryPool();
   auto GetDegree() const { return degree__; }
@@ -82,6 +88,11 @@ class Context {
                                const std::vector<const word64*> mx_addr,
                                const int num_primes, DeviceVector& out_ax,
                                DeviceVector& out_bx) const;
+  void hadamardMultAndAddBatch2(const std::vector<const word64 *> ax_addr,
+                                      const std::vector<const word64 *> bx_addr,
+                                      const int num_primes,
+                                      DeviceVector &out_ax,
+                                      DeviceVector &out_bx) const;
   auto GetKernelParams() const {
     return KernelParams{degree__, primes__.data(), barret_ratio__.data(),
                         barret_k__.data(), param__.log_degree_};

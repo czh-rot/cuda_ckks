@@ -940,6 +940,7 @@ void Context::KeySwitch(const DeviceVector &modup_out, const EvaluationKey &evk,
                                   primes__.data(), barret_k__.data(),
                                   barret_ratio__.data(), sum_bx.data());
   }
+  CudaCheckError();
 }
 
 __global__ void hadamardMultAndAddBatch_(
@@ -1003,8 +1004,8 @@ void Context::hadamardMultAndAddBatch(const std::vector<const word64 *> ax_addr,
   if (out_ax.size() != (size_t)num_primes * degree__ ||
       out_bx.size() != (size_t)num_primes * degree__)
     throw std::logic_error("Output has no proper size");
-  const int fold_size = ax_addr.size();
-  const int each_operand_size = num_primes * degree__;
+  const int fold_size = ax_addr.size(); // total size
+  const int each_operand_size = num_primes * degree__; // number of ct
   size_t addr_buffer_size = fold_size * sizeof(word64 *);
   const DeviceBuffer d_ax_addr(ax_addr.data(), addr_buffer_size,
                                cudaStreamLegacy);
@@ -1141,23 +1142,24 @@ void Context::PMult(const Ciphertext &ct, const Plaintext &pt,
       degree__, param__.log_degree_, num_primes, primes__.data(), barret_ratio__.data(),
       barret_k__.data(), op1.data(), op2.data(), mx.data(), op1_out.data(),
       op2_out.data());
+  CudaCheckError();
 }
 
-void Context::PSMult(const Ciphertext &ct, const Plaintext &pt,
-                    Ciphertext &out) const {
-  const auto &op1 = ct.getAxDevice();
-  const auto &op2 = ct.getBxDevice();
-  // const auto &mx = pt.getMxDevice();
-  auto &op1_out = out.getAxDevice();
-  auto &op2_out = out.getBxDevice();
-  op1_out.resize(op1.size());
-  op2_out.resize(op1.size());
-  int num_primes = op1.size() / degree__;
-  hadamardMultSFused_<<<degree__ * num_primes / 256, 256>>>(
-      degree__, param__.log_degree_, num_primes, primes__.data(), barret_ratio__.data(),
-      barret_k__.data(), op1.data(), op2.data(), op1_out.data(),
-      op2_out.data());
-}
+// void Context::PSMult(const Ciphertext &ct, const Plaintext &pt,
+//                     Ciphertext &out) const {
+//   const auto &op1 = ct.getAxDevice();
+//   const auto &op2 = ct.getBxDevice();
+//   // const auto &mx = pt.getMxDevice();
+//   auto &op1_out = out.getAxDevice();
+//   auto &op2_out = out.getBxDevice();
+//   op1_out.resize(op1.size());
+//   op2_out.resize(op1.size());
+//   int num_primes = op1.size() / degree__;
+//   hadamardMultSFused_<<<degree__ * num_primes / 256, 256>>>(
+//       degree__, param__.log_degree_, num_primes, primes__.data(), barret_ratio__.data(),
+//       barret_k__.data(), op1.data(), op2.data(), op1_out.data(),
+//       op2_out.data());
+// }
 
 __global__ void add_(const KernelParams params,
                      const int batch, const word64* op1, const word64* op2,
@@ -1170,35 +1172,53 @@ __global__ void add_(const KernelParams params,
   STRIDED_LOOP_END;
 }
 
-__global__ void automorphism_(const size_t degree, word64* ax, word64* res, int length, int autoIndex, word64* vec) {
+__global__ void addn_(const KernelParams params,
+                     const int batch, const word64* op1, const word64* op2,
+                     word64* op3) {
+  STRIDED_LOOP_START(batch * params.degree, i);
+  op3[i] = op1[1];
+  STRIDED_LOOP_END;
+}
+
+
+
+__global__ void automorphism_(const size_t degree, const word64* ax, word64* res, 
+                              const int length, const word64* vec) {
+  // int cid = blockIdx.x * blockDim.x + threadIdx.x;
+  // for (int j = 0; j < length; j++ ) {
+  //   res[cid + degree * j] = ax[vec[cid] + degree * j];
+  // }
   STRIDED_LOOP_START(length * degree, i);
   int tmp = i % degree;
   int l = i / degree;
-  auto axi = ax + l * degree;
-  res[i] = axi[vec[tmp]];
+  // auto axi = ax + l * degree;
+  // res[i] = axi[vec[tmp] + degree * l];
+  res[i] = ax[i/2 + tmp + l];
   STRIDED_LOOP_END;
 }
 
 void Context::AutomorphismTransform(Ciphertext &ct, DeviceVector &resax,  
                                     DeviceVector &resbx, int autoIndex, DeviceVector &vec) const {
-  int gridDim = 2048;
+  int gridDim = 1024;
   int blockDim = 256; // 
   auto &ax = ct.getAxDevice();
   auto &bx = ct.getBxDevice();
   resax.resize(ax.size());
   resbx.resize(bx.size());
   const int length = ax.size() / degree__;
-  automorphism_<<<gridDim, blockDim>>>(degree__, ax.data(), resax.data(), length, autoIndex, vec.data());
-  automorphism_<<<gridDim, blockDim>>>(degree__, bx.data(), resbx.data(), length, autoIndex, vec.data());
+  automorphism_<<<gridDim, blockDim>>>(degree__, ax.data(), resax.data(), length, vec.data());
+  automorphism_<<<gridDim, blockDim>>>(degree__, bx.data(), resbx.data(), length, vec.data());
+  CudaCheckError();
 }
 
 // unuseless function
-__global__ void automorphism2_(const size_t degree, word64* ax, word64* res, int length, int autoIndex, word64* vec) {
+__global__ void automorphism2_(const size_t degree, word64* ax, word64* res, int length, word64* vec) {
   STRIDED_LOOP_START(length * degree, i);
   int tmp = i % degree;
   int l = i / degree;
-  auto axi = ax + l * degree;
-  res[i] = axi[vec[tmp]];
+  // auto axi = ax + l * degree;
+  // res[i] = axi[vec[tmp]];
+  res[i] = ax[i/2 + tmp + l];
   STRIDED_LOOP_END;
 }
 
@@ -1212,8 +1232,22 @@ void Context::AutomorphismTransform2(Ciphertext &ct, DeviceVector &resax,
   resax.resize(ax.size());
   resbx.resize(bx.size());
   const int length = ax.size() / degree__;
-  automorphism2_<<<gridDim, blockDim>>>(degree__, ax.data(), resax.data(), length, autoIndex, vec.data());
-  automorphism2_<<<gridDim, blockDim>>>(degree__, bx.data(), resbx.data(), length, autoIndex, vec.data());
+  automorphism2_<<<gridDim, blockDim>>>(degree__, ax.data(), resax.data(), length, vec.data());
+  automorphism2_<<<gridDim, blockDim>>>(degree__, bx.data(), resbx.data(), length, vec.data());
+}
+
+void Context::AutomorphismTransformS(DeviceVector &op1, DeviceVector &op2,  DeviceVector &resax, 
+                              DeviceVector & resbx, int autoIndex, DeviceVector &vec) const {
+  int gridDim = 1024;
+  int blockDim = 256; // 
+  // auto &ax = ct.getAxDevice();
+  // auto &bx = ct.getBxDevice();
+  resax.resize(op1.size());
+  resbx.resize(op2.size());
+  const int length = op1.size() / degree__;
+  const int length2 = op2.size() / degree__;
+  automorphism_<<<gridDim, blockDim>>>(degree__, op1.data(), resax.data(), length, vec.data());
+  automorphism_<<<gridDim, blockDim>>>(degree__, op2.data(), resbx.data(), length2, vec.data());
 }
 
 void Context::CCAdd(const Ciphertext &ct1, const Plaintext &pt,
@@ -1256,6 +1290,46 @@ void Context::Add(const Ciphertext &ct1, const Ciphertext &ct2,
                                 op2_ax.data(), out_ax.data());
   add_<<<gridDim_, blockDim_>>>(GetKernelParams(), length, op1_bx.data(),
                                 op2_bx.data(), out_bx.data());
+}
+
+void Context::RAdd(const Ciphertext &ct1, const DeviceVector &ct2,
+                  Ciphertext &out) const {
+  const auto &op1_ax = ct1.getAxDevice();
+  const auto &op1_bx = ct1.getBxDevice();
+  auto &out_ax = out.getAxDevice();
+  auto &out_bx = out.getBxDevice();
+  out_ax.resize(op1_ax.size());
+  out_bx.resize(op1_ax.size());
+  const int length = op1_ax.size() / degree__;
+  int gridDim_ = 2048;
+  int blockDim_ = 256;
+  add_<<<gridDim_, blockDim_>>>(GetKernelParams(), length, op1_bx.data(),
+                                ct2.data(), out_bx.data());
+  addn_<<<gridDim_, blockDim_>>>(GetKernelParams(), length, op1_ax.data(),
+  ct2.data(), out_ax.data());
+  CudaCheckError();
+}
+
+__global__ void shift_(const KernelParams params, const int length,
+                     const int batch, const word64* op1, word64* op2) {
+  STRIDED_LOOP_START(batch * params.degree, i);
+  if (i < params.degree * length) op2[i] = op1[i];
+  else op2[i] = 0;
+  STRIDED_LOOP_END;
+}
+
+void Context::ChangeToPQ(const Ciphertext& op_in, Ciphertext & op_out) const {
+  const auto &op1_ax = op_in.getAxDevice();
+  const auto &op1_bx = op_in.getBxDevice();
+  auto &out_ax = op_out.getAxDevice();
+  auto &out_bx = op_out.getBxDevice();
+  out_ax.resize(degree__ * param__.max_num_moduli_);
+  out_bx.resize(degree__ * param__.max_num_moduli_);
+  const int length = op1_ax.size() / degree__;
+  int gridDim = 2048;
+  int blockDim = 256;
+  shift_<<<gridDim, blockDim>>>(GetKernelParams(), length, param__.max_num_moduli_, op1_ax.data(), out_ax.data());
+  shift_<<<gridDim, blockDim>>>(GetKernelParams(), length, param__.max_num_moduli_, op1_bx.data(), out_bx.data());
 }
 
 void Context::EnableMemoryPool() {

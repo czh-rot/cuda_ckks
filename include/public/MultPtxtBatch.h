@@ -33,7 +33,7 @@ class MultPtxtBatch {
   AddrVector ax__;
   AddrVector bx__;
   AddrVector mx__;
-  vector<word64> cst__;
+  //vector<word64> cst__;
 };
 
 }  // namespace ckks

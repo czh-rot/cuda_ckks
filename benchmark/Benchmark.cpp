@@ -66,10 +66,18 @@ class Benchmark {
     // ModUpBench();
     // ModDownBench();
     // KeyswitchBench();
-    Right_CCMult();
+    // Right_CCMult();
+    cout << "===========Baseline===========" << endl;
+    HE_Conv_baseline();
+    cout << "==========3-Hoisting==========" << endl;
+    HE_Conv_3_Hoisting();
+    cout << "=============Mine=============" << endl;
+    HE_Conv_Mine();
     // cout << "waht happen?" << endl;
     // Right_Rotate();
     // PtxtCtxtBatchBench();
+    // HE_Conv_baseline();
+    
 
     // the stage2 of the st-gcn in GPU accelerator
 
@@ -128,7 +136,7 @@ class Benchmark {
     ckks.context.is_keyswitch_fused = true;
 
     float T;
-    for (int i = 0; i < 10; ++i) {
+    for (int i = 0; i < 1; ++i) {
       Ciphertext op1 = ckks.GetRandomCiphertext();
       Ciphertext op2 = ckks.GetRandomCiphertext();
       Ciphertext out;
@@ -157,11 +165,12 @@ class Benchmark {
   // (a'', b' + b'')
   void Right_Rotate() {
   ckks.context.is_modup_batched = true;
-  ckks.context.is_moddown_fused = true;
-  ckks.context.is_keyswitch_fused = true;
+  // ckks.context.is_moddown_fused = true;
+  // ckks.context.is_keyswitch_fused = true;
   float T;
-  cout << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!";
+  cout << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << endl;
   DeviceVector vec = ckks.GetRandomPolyRNS(1);
+  cout << "the size of vec: " << vec.size() << endl;
   for (int i = 0; i < 1; ++i) {
     Ciphertext ct = ckks.GetRandomCiphertext();
     const int num_moduli_after_moddown = param.chain_length_;
@@ -173,23 +182,23 @@ class Benchmark {
     Ciphertext IPo;
     Ciphertext Out;
     ckks.context.AutomorphismTransform(ct, rax, rbx, 1, vec);
-    auto from = ckks.GetRandomPoly();
-    cout << "from " << from.size() << endl; // 14 11
+    // auto from = ckks.GetRandomPoly();
+    // cout << "from " << from.size() << endl; // 14 11
     cout << "rax " << rax.size() << endl;
     auto raxo = ckks.context.ModUp(rax);
     ckks.context.KeySwitch(raxo, key, IPo.ax__, IPo.bx__);
     ckks.context.ModDown(IPo.ax__, Out.ax__, num_moduli_after_moddown);
     ckks.context.ModDown(IPo.bx__, Out.bx__, num_moduli_after_moddown);
     tmp.bx__.append(rbx);
-    ckks.context.Add(Out, tmp, Out);
+    // ckks.context.Add(Out, tmp, Out);
     marker.end();
     cout << marker.name << ", " << marker.milliseconds << " ms" << endl;
     T += marker.milliseconds;
   }
-  cout << "total time: " << T << endl;
+  cout << "total time: " << T << "ms" << endl;
 } 
 
-/*
+
   void st_gcn_layer1_1() {
     // excute the rescale ciphertext five times, now the L is 11
     // base setup
@@ -263,7 +272,7 @@ class Benchmark {
     cout << "st-gcn layer 1 conv1 finished, consume " << T << " ms" << endl;
   }
 
-
+/*
   void new_st_gcn_layer1_1() {
     // excute the rescale ciphertext five times, now the L is 11
     // base setup
@@ -1269,175 +1278,109 @@ class Benchmark {
 // ch1, ch2,
 // kernel 1, kernel 2, kernel 3, kernel 4
   void HE_Conv_baseline() {
-    // ckks.context.is_modup_batched = true;
-    // ckks.context.is_moddown_fused = true;
+    ckks.context.is_modup_batched = true;
+    ckks.context.is_moddown_fused = true;
     ckks.context.is_keyswitch_fused = true;
     const int num_moduli_after_moddown = param.chain_length_; // init l
+    cout << "INFO: Define the L: " << num_moduli_after_moddown << endl;
     auto key = ckks.GetRandomKey();
+    cout << "INFO: Generate KSK Done." << endl;
+    cout << "INFO: Ciphertext IFP is : op1 (ch1 & ch2)." << endl;
     Ciphertext op1 = ckks.GetRandomCiphertext(); // init ciphertext(ch1, ch2)
+    cout << "INFO: Encode the 4 kernels (3*3*2) to 36 Plaintext." << endl;
     vector<vector<Plaintext>> m(4, vector<Plaintext>(9));
     for (int i = 0; i < 4; ++i) {
       for (int j = 0; j < 9; ++j) {
         m[i][j] = ckks.GetRandomPlaintext();
       }
     }
+    DeviceVector vec = ckks.GetRandomPolyRNS(1);
 
-    Ciphertext in_raise;
+    Ciphertext ATo;
     Ciphertext d2o;
     Ciphertext ksto;
     vector<Ciphertext> out(9);
     Ciphertext temp;
     vector<Ciphertext> res(2);
 
-    
+    out.clear();
     // 1-stage rot * 8 (autom -> modup -> innerp -> moddown --> add)
+    //cout << "INFO: Generate 8 Inner_Rot Ciphertext." << endl;
+    cout << "INFO: HE-Conv Start!" << endl;
+    float T;
+    Timer marker("INFO: Inner Rot:");
     out.push_back(op1); // record itself
     for (int i = 0; i < 8; ++i) {
       // automorphism replace it with ccmult
-      ckks.context.CCMult(op1, op1, temp, in_raise);
-      DeviceVector after_modup = ckks.context.ModUp(in_raise);
+      ckks.context.AutomorphismTransform(op1, ATo.ax__, ATo.bx__, 1, vec);
+      DeviceVector after_modup = ckks.context.ModUp(ATo.ax__);
       ckks.context.KeySwitch(after_modup, key, d2o.ax__, d2o.bx__);
       ckks.context.ModDown(d2o.ax__, ksto.ax__, num_moduli_after_moddown);
       ckks.context.ModDown(d2o.bx__, ksto.bx__, num_moduli_after_moddown);
-      ckks.context.Add(temp, ksto, temp);
-      out.push_back(temp); // k^2-1 rot res
+      ckks.context.RAdd(ksto, ATo.bx__, ksto);
+      out.push_back(ksto); // k^2-1 rot res
     }
+    marker.end();
+    cout << marker.name << ", " << marker.milliseconds << " ms" << endl;
+    T += marker.milliseconds;
+    //cout << "INFO: A series of MAC operations among 9 Ciphertexts." << endl;
 
-
+    Timer marker1("INFO: Inner MAC:");
     for (int i = 0; i < 2; ++i) { //outer 4/2 kernel
-      for (int j = 0; j < 9; ++j) { // inner k^2, 9 PCmult & 8 CCAdd
+      for (int j = 1; j < 8; ++j) { // inner k^2, 9 PCmult & 8 CCAdd
         ckks.context.PMult(out[j], m[i][j], temp);
-        res[i] += temp;
+        ckks.context.Add(temp, res[i], res[i]);
       }
     }
-
-    // rot op1 to op1
-    // automorphism replace it with ccmult
-    ckks.context.CCMult(op1, op1, temp, in_raise);
-    DeviceVector after_modup = ckks.context.ModUp(in_raise);
-    ckks.context.KeySwitch(after_modup, key, d2o.ax__, d2o.bx__);
-    ckks.context.ModDown(d2o.ax__, ksto.ax__, num_moduli_after_moddown);
-    ckks.context.ModDown(d2o.bx__, ksto.bx__, num_moduli_after_moddown);
-    ckks.context.Add(temp, ksto, op1); // op1 to represent the ciphertext
+    marker1.end();
+    cout << marker1.name << ", " << marker1.milliseconds << " ms" << endl;
+    T += marker1.milliseconds;
     out.clear();
-    out.push_back(op1); // record itself
+    
+    //cout << "INFO: Generate 1 Outer_Rot & 8 Inner_Rot Ciphertext." << endl;
+    // 1-stage rot * 9 (autom -> modup -> innerp -> moddown --> add)
 
-    // 1-stage rot * 8 (autom -> modup -> innerp -> moddown --> add)
-    for (int i = 0; i < 8; ++i) {
+    Timer marker2("INFO: Outer Rot:");
+    for (int i = 0; i < 9; ++i) {
       // automorphism replace it with ccmult
-      ckks.context.CCMult(op1, op1, temp, in_raise);
-      DeviceVector after_modup = ckks.context.ModUp(in_raise);
+      ckks.context.AutomorphismTransform(op1, ATo.ax__, ATo.bx__, 1, vec);
+      DeviceVector after_modup = ckks.context.ModUp(ATo.ax__);
       ckks.context.KeySwitch(after_modup, key, d2o.ax__, d2o.bx__);
       ckks.context.ModDown(d2o.ax__, ksto.ax__, num_moduli_after_moddown);
       ckks.context.ModDown(d2o.bx__, ksto.bx__, num_moduli_after_moddown);
-      ckks.context.Add(temp, ksto, temp);
-      out.push_back(temp); // k^2-1 rot res
+      ckks.context.RAdd(ksto, ATo.bx__, ksto);
+      out.push_back(ksto); // k^2-1 rot res
     }
+    marker2.end();
+    cout << marker2.name << ", " << marker2.milliseconds << " ms" << endl;
+    T += marker2.milliseconds;
 
+    //cout << "INFO: A series of MAC operations among 9 Ciphertexts." << endl;
+    Timer marker3("INFO: Inner MAC:");
     for (int i = 0; i < 2; ++i) { //outer 4/2 kernel
       for (int j = 0; j < 9; ++j) { // inner k^2, 9 PCmult & 8 CCAdd
         ckks.context.PMult(out[j], m[i+2][j], temp);
-        res[i] += temp;
+        ckks.context.Add(res[i], temp, res[i]);
       }
     }
-    // Conv finish !!
+    marker3.end();
+    cout << marker3.name << ", " << marker3.milliseconds << " ms" << endl;
+    T += marker3.milliseconds;
+    cout << "Total time: " << T <<  " ms" << endl;
+    cout << "INFO: HE-Conv End!!" << endl;
   }
 
   void HE_Conv_3_Hoisting() {
-    // ckks.context.is_modup_batched = true;
-    // ckks.context.is_moddown_fused = true;
+    ckks.context.is_modup_batched = true;
+    ckks.context.is_moddown_fused = true;
     ckks.context.is_keyswitch_fused = true;
     const int num_moduli_after_moddown = param.chain_length_; // init l
+    cout << "INFO: Degine the L: " << num_moduli_after_moddown << endl;
     auto key = ckks.GetRandomKey();
+    cout << "INFO: Generate KSK Done." << endl;
+    cout << "INFO: Ciphertext IFP is : op1 (ch1 & ch2)." << endl;
     Ciphertext op1 = ckks.GetRandomCiphertext(); // init ciphertext(ch1, ch2)
-    vector<vector<Plaintext>> m(4, vector<Plaintext>(9));
-    for (int i = 0; i < 4; ++i) {
-      for (int j = 0; j < 9; ++j) {
-        m[i][j] = ckks.GetRandomPQPlaintext(); // PQ plaintext
-      }
-    }
-
-    Ciphertext in_raise;
-    Ciphertext d2o;
-    Ciphertext ksto;
-    vector<Ciphertext> out(9);
-    Ciphertext temp;
-    vector<Ciphertext> res(2);
-
-    
-    // 1-stage rot * 8 (autom -> modup -> innerp -> moddown --> add)
-    out.push_back(ckks.GetRandomPQCiphertext()); // change op1 to PQ and record itself
-    ckks.context.CCMult(op1, op1, temp, in_raise);
-    // change temp to PQ
-    temp = ckks.GetRandomPQCiphertext();
-    DeviceVector after_modup = ckks.context.ModUp(in_raise);
-    for (int i = 0; i < 8; ++i) {
-      // automorphism replace it with ccmult
-      ckks.context.KeySwitch(after_modup, key, d2o.ax__, d2o.bx__);
-      // ckks.context.ModDown(d2o.ax__, ksto.ax__, num_moduli_after_moddown);
-      // ckks.context.ModDown(d2o.bx__, ksto.bx__, num_moduli_after_moddown);
-      // (0, b') == temp
-      ckks.context.Add(temp, d2o, temp);
-      out.push_back(temp); // k^2-1 rot res
-    }
-
-
-    for (int i = 0; i < 2; ++i) { //outer 4/2 kernel
-      for (int j = 0; j < 9; ++j) { // inner k^2, 9 PCmult & 8 CCAdd
-        ckks.context.PMult(out[j], m[i][j], temp);
-        res[i] += temp;
-      }
-    }
-
-    // rot op1 to op1
-    // automorphism replace it with ccmult
-    ckks.context.CCMult(op1, op1, temp, in_raise);
-    temp = ckks.GetRandomPQCiphertext();
-    DeviceVector after_modup = ckks.context.ModUp(in_raise);
-    ckks.context.KeySwitch(after_modup, key, d2o.ax__, d2o.bx__);
-    ckks.context.ModDown(d2o.ax__, ksto.ax__, num_moduli_after_moddown);
-    ckks.context.ModDown(d2o.bx__, ksto.bx__, num_moduli_after_moddown);
-    ckks.context.Add(temp, ksto, op1); // op1 to represent the ciphertext
-    out.clear();
-    out.push_back(ckks.GetRandomPQCiphertext()); // change op1 to PQ and record itself
-
-    // 1-stage rot * 8 (autom -> modup -> innerp -> moddown --> add)
-    ckks.context.CCMult(op1, op1, temp, in_raise);
-    DeviceVector after_modup = ckks.context.ModUp(in_raise);
-    for (int i = 0; i < 8; ++i) {
-      // automorphism replace it with ccmult
-      ckks.context.KeySwitch(after_modup, key, d2o.ax__, d2o.bx__);
-      // ckks.context.ModDown(d2o.ax__, ksto.ax__, num_moduli_after_moddown);
-      // ckks.context.ModDown(d2o.bx__, ksto.bx__, num_moduli_after_moddown);
-      ckks.context.Add(temp, d2o, temp);
-      out.push_back(temp); // k^2-1 rot res
-    }
-
-    for (int i = 0; i < 2; ++i) { //outer 4/2 kernel
-      for (int j = 0; j < 9; ++j) { // inner k^2, 9 PCmult & 8 CCAdd
-        ckks.context.PMult(out[j], m[i+2][j], temp);
-        res[i] += temp;
-      }
-    }
-
-    // moddown
-    vector<Ciphertext> ans(2);
-    for (int i = 0; i <2; ++i) {
-      ckks.context.ModDown(res[i], ans[i], num_moduli_after_moddown);
-    }
-    // Conv finish !!
-  }
-
-  void HE_Conv_3_My() {
-    // ckks.context.is_modup_batched = true;
-    // ckks.context.is_moddown_fused = true;
-    ckks.context.is_keyswitch_fused = true;
-    const int num_moduli_after_moddown = param.chain_length_; // init l
-    auto key = ckks.GetRandomKey();
-    vector<Ciphertext> input;
-    for (int i = 0; i < param.dnum_; ++i) { // inital ciphertext index
-      input.push_back(GetRandomACiphertext());
-    }
+    cout << "INFO: Encode the 4 kernels (3*3*2) to 36 Plaintext." << endl;
     vector<vector<Plaintext>> m(4, vector<Plaintext>(9));
     for (int i = 0; i < 4; ++i) {
       for (int j = 0; j < 9; ++j) {
@@ -1445,69 +1388,200 @@ class Benchmark {
       }
     }
     DeviceVector vec = ckks.GetRandomPolyRNS(1);
+
     Ciphertext d2o;
     Ciphertext ksto;
-    //vector<Ciphertext> out(9); // inner rot immediate result
-    vector<vector<Ciphertext>> out(2, vector<Ciphertext>(9));
-    Ciphertext temp;
-    DeviceVector rax;
-    DeviceVector rbx;
+    vector<Ciphertext> out(9);
+    Ciphertext temp = ckks.GetRandomPQCiphertext();;
+    vector<Ciphertext> res(2);
+    DeviceVector afmd2;
+    Ciphertext PQop1;
+    out.clear();
+
+    cout << "INFO: HE-Conv Start!" << endl;
+    float T;
+    Timer mm("INFO: Inner Rot: ");
+    // 1-stage rot * 8 (autom -> modup -> innerp -> moddown --> add)
+    ckks.context.ChangeToPQ(op1, PQop1);
+    out.push_back(PQop1); // change op1 to PQ and record itself
+    DeviceVector after_modup = ckks.context.ModUp(op1.ax__);
+    for (int i = 0; i < 8; ++i) {
+      // modup_out && PQop1.bx should take part in the AutoM
+      ckks.context.AutomorphismTransformS(op1.bx__, after_modup, 
+                                          PQop1.bx__, afmd2, 1, vec);
+      ckks.context.KeySwitch(afmd2, key, d2o.ax__, d2o.bx__); // PQ
+      // (0, b') == temp
+      ckks.context.RAdd(d2o, PQop1.bx__, temp); // PQ
+      out.push_back(temp); // k^2-1 rot res
+    }
+    mm.end();
+    cout << mm.name << ", " << mm.milliseconds << " ms" << endl;
+    T += mm.milliseconds;
+
+    Timer mm1("INFO: Inner MAC: ");
+    for (int i = 0; i < 2; ++i) { //outer 4/2 kernel
+      for (int j = 0; j < 9; ++j) { // inner k^2, 9 PCmult & 8 CCAdd
+        ckks.context.PMult(out[j], m[i][j], temp);
+        ckks.context.Add(temp, res[i], res[i]);
+      }
+    }
+    mm1.end();
+    cout << mm1.name << ", " << mm1.milliseconds << " ms" << endl;
+    T += mm1.milliseconds;
+    out.clear();
+
+    Timer mm2("INFO: Outer Rot:");
+    // 1-stage rot * 9 (autom -> modup -> innerp -> moddown --> add)
+    after_modup = ckks.context.ModUp(op1.ax__);
+    for (int i = 0; i < 9; ++i) {
+      // modup_out && PQop1.bx should take part in the AutoM
+      ckks.context.AutomorphismTransformS(op1.bx__, after_modup, PQop1.bx__, afmd2, 1, vec);
+      ckks.context.KeySwitch(afmd2, key, d2o.ax__, d2o.bx__); // PQ
+      // (0, b') == temp
+      ckks.context.RAdd(d2o, PQop1.bx__, temp); // PQ
+      out.push_back(temp); // k^2-1 rot res
+    }
+    mm2.end();
+    cout << mm2.name << ", " << mm2.milliseconds << " ms" << endl;
+    T += mm2.milliseconds;
+
+    Timer mm3("INFO: Outer MAC:");
+    for (int i = 0; i < 2; ++i) { //outer 4/2 kernel
+      for (int j = 0; j < 9; ++j) { // inner k^2, 9 PCmult & 8 CCAdd
+        ckks.context.PMult(out[j], m[i+2][j], temp);
+        ckks.context.Add(temp, res[i], res[i]);
+      }
+    }
+    mm3.end();
+    cout << mm3.name << ", " << mm3.milliseconds << " ms" << endl;
+    T += mm3.milliseconds;
+
+    // moddown
+    Timer mm4("INFO: Hosting-ModDown:");
+    vector<Ciphertext> ans(2);
+    for (int i = 0; i <2; ++i) {
+      ckks.context.ModDown(res[i].ax__, ans[i].ax__, num_moduli_after_moddown);
+      ckks.context.ModDown(res[i].bx__, ans[i].bx__, num_moduli_after_moddown);
+    }
+    mm4.end();
+    cout << mm4.name << ", " << mm4.milliseconds << " ms" << endl;
+    T += mm4.milliseconds;
+    cout << "Total time: " << T <<  " ms" << endl;
+    cout << "INFO: HE-Conv End!!" << endl;
+    // Conv finish !!
+  }
+
+  void HE_Conv_Mine() {
+    ckks.context.is_modup_batched = true;
+    ckks.context.is_moddown_fused = true;
+    ckks.context.is_keyswitch_fused = true;
+    const int num_moduli_after_moddown = param.chain_length_; // init l
+    cout << "INFO: Degine the L: " << num_moduli_after_moddown << endl;
+    cout << "INFO: Degine the N: " << param.degree_ << endl;
+    cout << "INFO: Degine the dnum: " << param.dnum_ << endl;
+    auto key = ckks.GetRandomKey();
+    cout << "INFO: Generate KSK Done." << endl;
+    cout << "INFO: Ciphertext IFP is : op1 (ch1 & ch2), dnum groups." << endl;
+    vector<Ciphertext> input(param.dnum_);
+    input.clear();
+    for (int i = 0; i < param.dnum_; ++i) { // inital ciphertext index
+      input.push_back(ckks.GetRandomACiphertext());
+    }
+    cout << "INFO: Encode the 4 kernels (3*3*2) to 36 Plaintext." << endl;
+    // vector<vector<Plaintext>> m(4, vector<Plaintext>(9));
+    // for (int i = 0; i < 4; ++i) {
+    //   for (int j = 0; j < 9; ++j) {
+    //     m[i][j] = ckks.GetRandomPQPlaintext(); // PQ plaintext
+    //   }
+    // }
+    Plaintext m = ckks.GetRandomPQPlaintext();
+    DeviceVector vec = ckks.GetRandomPolyRNS(1);
+
+    Ciphertext d2o;
+    vector<Ciphertext> out(9); // inner rot immediate result
+    vector<Ciphertext> out2(9); // inner rot immediate result
+    out.clear();
+    out2.clear();
+    DeviceVector mupo;
     vector<Ciphertext> res(2);
     auto in = ckks.GetRandomPolyAfterModUp(param.dnum_);
-    MultPtxtBatch batcher(&ckks.context);
+    Ciphertext PQop1;
+    DeviceVector afmd2;
+    Ciphertext temp;
+    Ciphertext op1 = ckks.GetRandomCiphertext(); // input set
 
-    for (int i = 0; i < param.dnum_; ++i) {
-      temp.ax__.append(input[i].ax__);
-      temp.bx__.append(input[i].bx__);
-    }
+    cout << "INFO: HE-Conv Start!" << endl;
+    float T;
+    Timer mm("INFO: Inner Rot: ");
 
+    ckks.context.ChangeToPQ(op1, PQop1);
     // 1-stage rot * 8 (autom -> modup -> innerp -> moddown --> add)
     // record itslef, unneccessary operate
-    // for (int i = 0; i < param.dnum_; ++i) {
-    //   out[0][i] = input[i];
-    // }
-    out[0][0] = temp;
+    out.push_back(PQop1);
     // rotate k^2 - 1
     for (int i = 0; i < param.dnum_; ++i) {
-      ckks.context.AutomorphismTransform(input[i], rax, rbx, i, vec);
-      auto raxo = ckks.context.ModUp(rax);
+      //ckks.context.AutomorphismTransform(input[i], rax, rbx, i, vec);
+      mupo = ckks.context.ModUp(input[i].ax__);
     }
-    // in == append(raxo)
+    // in == append(mupo1, mupo2, mupo3)
     for (int j = 0; j < 8; ++j) {
-      ckks.context.KeySwitch(in, key, d2o.ax__, d2o.bx__);
-      ckks.context.Add(d2o, d2o, d2o); // add
-      out[0][j+1] = d2o; // restore
+      ckks.context.AutomorphismTransformS(op1.bx__, in, PQop1.bx__, afmd2, 1, vec);
+      ckks.context.KeySwitch(afmd2, key, d2o.ax__, d2o.bx__);
+      ckks.context.RAdd(d2o, PQop1.bx__, temp); // add
+      out.push_back(temp); // restore
     }
+    mm.end();
+    cout << mm.name << ", " << mm.milliseconds << " ms" << endl;
+    T += mm.milliseconds;
 
+    Timer mm1("INFO: Outer Rot: ");
     // rotate k^2 (1 out + k^2 - 1 rot)
     for (int i = 0; i < param.dnum_; ++i) {
-      ckks.context.AutomorphismTransform(input[i], rax, rbx, i, vec);
-      auto raxo = ckks.context.ModUp(rax);
+      //ckks.context.AutomorphismTransform(input[i], rax, rbx, i, vec);
+      mupo = ckks.context.ModUp(input[i].ax__);
     }
+    // in == append(mupo1, mupo2, mupo3)
     for (int j = 0; j < 9; ++j) {
-      ckks.context.KeySwitch(in, key, d2o.ax__, d2o.bx__);
-      ckks.context.Add(d2o, d2o, d2o); // add
-      out[1][j+1] = d2o; // restore
+      ckks.context.AutomorphismTransformS(op1.bx__, in, PQop1.bx__, afmd2, 1, vec);
+      ckks.context.KeySwitch(afmd2, key, d2o.ax__, d2o.bx__);
+      ckks.context.RAdd(d2o, PQop1.bx__, temp); // add
+      out2.push_back(temp); // restore
     }
+    mm1.end();
+    cout << mm1.name << ", " << mm1.milliseconds << " ms" << endl;
+    T += mm1.milliseconds;
 
     // Fusion MAC
+    MultPtxtBatch batcher(&ckks.context);
+    MultPtxtBatch batcher2(&ckks.context);
+    Timer mm2("INFO: Fusion MAC:");
     for (int i = 0; i < 9; ++i) {
-      batcher.push2(out[0][i], m[0][i]);
-      batcher.push2(out[1][i], m[2][i]);
+      batcher.push2(out[i], m);
+      batcher.push2(out2[i], m);
     }
     batcher.flush2(res[0]);
 
     for (int i = 0; i < 9; ++i) {
-      batcher.push2(out[0][i], m[1][i]);
-      batcher.push2(out[1][i], m[3][i]);
+      batcher2.push2(out[i], m);
+      batcher2.push2(out2[i], m);
     }
-    batcher.flush2(res[1]);
+    batcher2.flush2(res[1]);
+    mm2.end();
+    cout << mm2.name << ", " << mm2.milliseconds << " ms" << endl;
+    T += mm2.milliseconds;
 
     // moddown
+    Timer mm3("INFO: Hosting-ModDown:");
     vector<Ciphertext> ans(2);
     for (int i = 0; i <2; ++i) {
-      ckks.context.ModDown(res[i], ans[i], num_moduli_after_moddown);
+      ckks.context.ModDown(res[i].ax__, ans[i].ax__, num_moduli_after_moddown);
+      ckks.context.ModDown(res[i].bx__, ans[i].bx__, num_moduli_after_moddown);
     }
+    mm3.end();
+    cout << mm3.name << ", " << mm3.milliseconds << " ms" << endl;
+    T += mm3.milliseconds;
+    cout << "Total time: " << T <<  " ms" << endl;
+    cout << "INFO: HE-Conv End!!" << endl;
     // Conv finish !!
   }
 /*
@@ -1574,6 +1648,7 @@ class Benchmark {
     };
     // Run("PtxtCtxtMAD", MAD, op1, op2);
     Run("BatchedPtxtCtxtMAD", BatchMAD, op1, op2);
+    cout << "PtxtCtxtBatchBench Done!" << endl;
   }
 
  private:
@@ -1584,6 +1659,6 @@ class Benchmark {
 
 int main() {
   // Benchmark bench(PARAM_LARGE_DNUM);
-  Benchmark bench(new_stgcn1_1);
+  Benchmark bench(mymod);
   return 0;
 }
